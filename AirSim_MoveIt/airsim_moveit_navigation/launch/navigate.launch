@@ -1,0 +1,5 @@
+<launch>
+    <node name="airsim_navigator" pkg="airsim_moveit_navigation" type="airsim_navigator" respawn="false" output="screen" launch-prefix="gdb -ex run --args">
+        <param name="/planning_plugin" value="ompl_interface/OMPLPlanner"/>
+    </node>
+</launch>

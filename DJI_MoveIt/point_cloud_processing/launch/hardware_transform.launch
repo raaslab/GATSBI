@@ -1,0 +1,8 @@
+<launch>
+
+  <node pkg="point_cloud_processing" type="dji_tf_broadcast" name="dji_tf_broadcast"/>
+  <node pkg="point_cloud_processing" type="velodyne_tf_broadcast" name="velodyne_tf_broadcast"/>
+
+  <node pkg="tf" type="static_transform_publisher" name="local_broadcaster" args="0 0 0 0 0 0 1 world local 100" />
+
+</launch>

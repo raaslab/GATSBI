@@ -1,0 +1,5 @@
+<launch>
+    <node name="dji_navigator_client" pkg="airsim_moveit_navigation" type="dji_navigator_client" output="screen">
+        <param name="path_file" value="/home/nvidia/catkin_ws/src/GATSBI/airsim_moveit_navigation/path.txt"/>
+    </node>
+</launch>

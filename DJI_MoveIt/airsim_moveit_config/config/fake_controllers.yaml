@@ -1,0 +1,10 @@
+controller_list:
+  - name: fake_DroneBody_controller
+    type: $(arg execution_type)
+    joints:
+      - virtual_joint
+initial:  # Define initial robot poses.
+#  - group: DroneBody
+#    pose: home
+
+  []
