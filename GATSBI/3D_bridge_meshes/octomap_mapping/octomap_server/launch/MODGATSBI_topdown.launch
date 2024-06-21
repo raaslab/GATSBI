@@ -1,0 +1,20 @@
+<launch>
+	<node pkg="octomap_server" type="airsim_MODGATSBI_topdown" name="GATSBI" output="screen">
+		<param name="resolution" value="1" />
+		<param name="viewing_cone_angle_threshold" value="0" />
+		<param name="viewing_cone_angle_buffer" value="5" />
+		<param name="min_radius" value="2" />
+		<param name="max_radius" value="4" />
+		<param name="neighbor_viewpoints_check" value="2" />
+		<param name="neighbor_check" value="1" />
+		<param name="replanning_time" value="240" />
+		<param name="rotate_for_multiple_poses_at_view_point" value="true" />
+		<param name="x_min" value="-70" />
+		<param name="x_max" value="70" />
+		<param name="y_min" value="-70" />
+		<param name="y_max" value="70" />
+		<param name="z_min" value="0" />
+		<param name="z_max" value="25" />
+		<param name="treat_unknown_free" value="true" />
+	</node>
+</launch>

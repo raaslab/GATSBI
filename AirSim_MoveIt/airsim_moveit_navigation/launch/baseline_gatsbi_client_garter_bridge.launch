@@ -1,0 +1,13 @@
+<launch>
+
+	<node pkg="tf2_ros" type="static_transform_publisher" name="map_to_world_static_tf" args="0 0 0 1.57 0 0 world_enu kopt_frame"/>
+
+	<node pkg="airsim_moveit_navigation" type="baseline_gatsbi_client" name="baseline_gatsbi_client" output="screen">
+		<param name="path_file" value="/home/user/GATSBI_Journal/garter_bridge_path.csv" />
+		<param name="resolution" value="1" />
+		<param name="viewing_cone_angle_threshold" value="20" />
+		<param name="viewing_cone_angle_buffer" value="0" />
+		<param name="min_radius" value="2" />
+		<param name="max_radius" value="10" />
+	</node>
+</launch>

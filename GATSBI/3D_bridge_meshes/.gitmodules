@@ -1,0 +1,3 @@
+[submodule "budgetPlanning"]
+	path = budgetPlanning
+	url = git@github.com:raaslab/budgetPlanning.git

@@ -1,0 +1,37 @@
+<launch>
+
+	<node pkg="tf2_ros" type="static_transform_publisher" name="map_to_world_static_tf" args="0 0 0 0 0 0 map world"/>
+
+
+	<node pkg="point_cloud_processing" type="pointcloud_trimmed" name="pointcloud_trimmed" output="screen">
+		<param name="input_topic" type="string" value="/lio_sam/mapping/map_local"/>
+    	<param name="output_topic" type="string" value="/lio_sam/mapping/map_local_trimmed"/>
+    	<param name="filter_limit_low_x" value="0.0" />
+    	<param name="filter_limit_high_x" value="6.0" />
+    	<param name="filter_limit_low_y" value="-2.0" />
+    	<param name="filter_limit_high_y" value="2.0" />
+    	<param name="filter_limit_low_z" value="0.0" />
+    	<param name="filter_limit_high_z" value="5.0" />
+	</node>
+
+	<node pkg="octomap_server" type="octomap_server_node" name="octomap_server">
+		<param name="resolution" value="0.25" /> <!-- resolution 2 -->
+		<param name="frame_id" type="string" value="world" />
+		<param name="sensor_model/max_range" value="20.0" />
+		<remap from="cloud_in" to="/lio_sam/mapping/map_local" />
+	</node>
+
+	<node pkg="octomap_server" type="octomap_server_node_trimmed" name="octomap_server_trimmed">
+		<param name="resolution" value="0.25" /> <!-- resolution 2 -->
+		<param name="frame_id" type="string" value="world" />
+		<param name="sensor_model/max_range" value="20.0" />
+		<remap from="cloud_in" to="/lio_sam/mapping/map_local_trimmed" />
+	</node>
+
+	<node pkg="octomap_server" type="hardware_zFilter" name="hardware_zFilter">
+		<param name="resolution" value="0.25" />
+		<param name="trimmed_height" value="0.25" />
+	</node>
+
+
+</launch>

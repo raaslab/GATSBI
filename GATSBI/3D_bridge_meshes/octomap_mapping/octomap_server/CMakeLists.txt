@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 2.8)
 project(octomap_server)
-add_compile_options(-std=c++11)
+add_compile_options(-std=c++14)
 
 set(PACKAGE_DEPENDENCIES
   roscpp
@@ -23,7 +23,7 @@ set(PACKAGE_DEPENDENCIES
 
 find_package(catkin REQUIRED COMPONENTS ${PACKAGE_DEPENDENCIES})
 
-find_package(octomap REQUIRED)
+find_package(octomap 1.10 REQUIRED)
 add_definitions(-DOCTOMAP_NODEBUGOUT)
 
 include_directories(
@@ -95,6 +95,12 @@ target_link_libraries(airsim_GATSBI ${PROJECT_NAME} ${LINK_LIBS})
 add_executable(airsim_MODGATSBI src/airsim_MODGATSBI.cpp)
 target_link_libraries(airsim_MODGATSBI ${PROJECT_NAME} ${LINK_LIBS})
 
+add_executable(airsim_MODGATSBI_topdown src/airsim_MODGATSBI_topdown.cpp)
+target_link_libraries(airsim_MODGATSBI_topdown ${PROJECT_NAME} ${LINK_LIBS})
+
+add_executable(nbv_pointcloud src/nbv_pointcloud.cpp)
+target_link_libraries(nbv_pointcloud ${PROJECT_NAME} ${LINK_LIBS})
+
 add_executable(hardware_offline_GATSBI src/hardware_offline_GATSBI.cpp)
 target_link_libraries(hardware_offline_GATSBI ${PROJECT_NAME} ${LINK_LIBS})
 
@@ -124,6 +130,12 @@ target_link_libraries(visitedPoints_Publisher ${PROJECT_NAME} ${LINK_LIBS})
 
 add_executable(baseline src/baseline.cpp)
 target_link_libraries(baseline ${PROJECT_NAME} ${LINK_LIBS})
+
+add_executable(free_cell_publisher src/free_cell_publisher.cpp)
+target_link_libraries(free_cell_publisher ${PROJECT_NAME} ${LINK_LIBS})
+
+add_executable(octomap_subscriber src/octomap_subscriber.cpp)
+target_link_libraries(octomap_subscriber ${PROJECT_NAME} ${LINK_LIBS})
 
 # install targets:
 install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_color

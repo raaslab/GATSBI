@@ -109,6 +109,7 @@ OctomapServerTrimmed::OctomapServerTrimmed(const ros::NodeHandle private_nh_, co
   m_nh_private.param("compress_map", m_compressMap, m_compressMap);
   m_nh_private.param("incremental_2D_projection", m_incrementalUpdate, m_incrementalUpdate);
 
+  ROS_WARN("Compress Map: %s", (m_compressMap ? "True" : "False"));
   if (m_filterGroundPlane && (m_pointcloudMinZ > 0.0 || m_pointcloudMaxZ < 0.0)){
     ROS_WARN_STREAM("You enabled ground filtering but incoming pointclouds will be pre-filtered in ["
               <<m_pointcloudMinZ <<", "<< m_pointcloudMaxZ << "], excluding the ground level z=0. "
@@ -439,7 +440,8 @@ void OctomapServerTrimmed::insertScan(const tf::Point& sensorOriginTf, const PCL
     if (occupied_cells.find(*it) == occupied_cells.end()){
       
       m_octree->updateNode(*it, false);
-      /*OcTreeNode* node = m_octree->search(*it);
+      /*
+      OcTreeNode* node = m_octree->search(*it);
       if (node && m_octree->isNodeOccupied(node)){
         m_octree->updateNode(*it, true);
       }
@@ -480,7 +482,10 @@ void OctomapServerTrimmed::insertScan(const tf::Point& sensorOriginTf, const PCL
   ROS_DEBUG_STREAM("Bounding box keys (after): " << m_updateBBXMin[0] << " " <<m_updateBBXMin[1] << " " << m_updateBBXMin[2] << " / " <<m_updateBBXMax[0] << " "<<m_updateBBXMax[1] << " "<< m_updateBBXMax[2]);
 
   if (m_compressMap)
+  {
+    //ROS_WARN("PRUNING MAP");
     m_octree->prune();
+  }
 
 #ifdef COLOR_OCTOMAP_SERVER
   if (colors)
@@ -1153,6 +1158,7 @@ void OctomapServerTrimmed::reconfigureCallback(octomap_server::OctomapServerConf
     m_compressMap               = config.compress_map;
     m_incrementalUpdate         = config.incremental_2D_projection;
 
+    ROS_WARN("Compress Map: %s", (m_compressMap ? "True" : "False"));
     // Parameters with a namespace require an special treatment at the beginning, as dynamic reconfigure
     // will overwrite them because the server is not able to match parameters' names.
     if (m_initConfig){

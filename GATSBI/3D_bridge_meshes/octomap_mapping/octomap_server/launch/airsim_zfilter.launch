@@ -1,0 +1,7 @@
+<launch>
+	<arg name="resolution" default="1.0" />
+	<node pkg="octomap_server" type="airsim_zFilter" name="airsim_zFilter">
+		<param name="resolution" value="$(arg resolution)" />
+		<param name="trimmed_height" value="2" />
+	</node>
+</launch>

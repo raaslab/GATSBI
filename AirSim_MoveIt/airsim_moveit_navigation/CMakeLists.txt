@@ -35,6 +35,7 @@ find_package(catkin REQUIRED COMPONENTS
     sensor_msgs
     pcl_conversions
     pcl_ros
+    quadrotor_msgs
 )
 
 find_package(octomap REQUIRED)
@@ -63,9 +64,21 @@ add_executable(airsim_navigator src/AirSim_Navigator.cpp src/airsim_navigator_no
 target_compile_options(airsim_navigator PRIVATE ${OpenMP_FLAGS} ${CMAKE_CXX_FLAGS})
 target_link_libraries(airsim_navigator AirLib ${OCTOMAP_LIBRARIES} ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${OpenMP_LIBS})
 
+add_executable(airsim_navigator_ego src/AirSim_Navigator_EGO.cpp src/airsim_navigator_ego_node.cpp)
+target_compile_options(airsim_navigator_ego PRIVATE ${OpenMP_FLAGS} ${CMAKE_CXX_FLAGS})
+target_link_libraries(airsim_navigator_ego AirLib ${OCTOMAP_LIBRARIES} ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${OpenMP_LIBS})
+
+add_executable(airsim_multiprednbv_navigator src/AirSim_Navigator.cpp src/airsim_multiprednbv_navigator_node.cpp)
+target_compile_options(airsim_multiprednbv_navigator PRIVATE ${OpenMP_FLAGS} ${CMAKE_CXX_FLAGS})
+target_link_libraries(airsim_multiprednbv_navigator AirLib ${OCTOMAP_LIBRARIES} ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${OpenMP_LIBS})
+
 add_executable(airsim_navigator_client src/airsim_navigator_client.cpp)
 target_link_libraries(airsim_navigator_client ${catkin_LIBRARIES})
 add_dependencies(airsim_navigator_client ${airsim_moveit_navigation_EXPORTED_TARGETS})
+
+add_executable(baseline_gatsbi_client src/baseline_gatsbi_client.cpp)
+target_link_libraries(baseline_gatsbi_client ${catkin_LIBRARIES})
+add_dependencies(baseline_gatsbi_client ${airsim_moveit_navigation_EXPORTED_TARGETS})
 
 add_executable(depth_segmentation src/depth_segmentation.cpp)
 target_link_libraries(depth_segmentation ${catkin_LIBRARIES})
@@ -74,3 +87,23 @@ add_dependencies(depth_segmentation ${airsim_moveit_navigation_EXPORTED_TARGETS}
 add_executable(airsim_nbv_planner src/airsim_nbv_planner.cpp)
 target_compile_options(airsim_nbv_planner PRIVATE ${OpenMP_FLAGS} ${CMAKE_CXX_FLAGS})
 target_link_libraries(airsim_nbv_planner AirLib ${OCTOMAP_LIBRARIES} ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${OpenMP_LIBS})
+
+add_executable(plan_sub src/plan_sub.cpp)
+target_compile_options(plan_sub PRIVATE ${OpenMP_FLAGS} ${CMAKE_CXX_FLAGS})
+target_link_libraries(plan_sub AirLib ${OCTOMAP_LIBRARIES} ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${OpenMP_LIBS})
+
+add_executable(airsim_multiagent_client src/airsim_multiagent_client.cpp)
+target_compile_options(airsim_multiagent_client PRIVATE ${OpenMP_FLAGS} ${CMAKE_CXX_FLAGS})
+target_link_libraries(airsim_multiagent_client AirLib ${OCTOMAP_LIBRARIES} ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${OpenMP_LIBS})
+
+add_executable(transform_odom src/transform_odom.cpp)
+target_compile_options(transform_odom PRIVATE ${OpenMP_FLAGS} ${CMAKE_CXX_FLAGS})
+target_link_libraries(transform_odom AirLib ${OCTOMAP_LIBRARIES} ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${OpenMP_LIBS})
+
+add_executable(airsim_ego_client src/airsim_ego_client.cpp)
+target_compile_options(airsim_ego_client PRIVATE ${OpenMP_FLAGS} ${CMAKE_CXX_FLAGS})
+target_link_libraries(airsim_ego_client AirLib ${OCTOMAP_LIBRARIES} ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${OpenMP_LIBS})
+
+add_executable(ego_goal src/ego_goal.cpp)
+target_compile_options(ego_goal PRIVATE ${OpenMP_FLAGS} ${CMAKE_CXX_FLAGS})
+target_link_libraries(ego_goal AirLib ${OCTOMAP_LIBRARIES} ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${OpenMP_LIBS})

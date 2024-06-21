@@ -1,0 +1,8 @@
+<launch>
+  <node name="point_cloud_merge_node" pkg="point_cloud_processing" type="point_cloud_merge_node" output="screen">
+    <param name="point_cloud_merge/topic1" value="/airsim_node/drone_1/lidar/LidarCustomTrimmed_filtered" />
+    <param name="point_cloud_merge/topic2" value="/airsim_node/drone_1/lidar/LidarCustomTrimmed_filtered_down" />
+    <param name="point_cloud_merge/combined_topic" value="/airsim_node/drone_1/lidar/LidarCustomTrimmed" />
+  </node>
+
+</launch>

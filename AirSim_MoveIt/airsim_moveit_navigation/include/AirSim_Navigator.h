@@ -15,6 +15,7 @@
 #include <geometry_msgs/Point.h>
 #include <geometry_msgs/PoseArray.h>
 #include <std_msgs/Float64.h>
+#include <std_msgs/Bool.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <octomap_msgs/conversions.h>
@@ -27,7 +28,11 @@
 #include <actionlib/client/simple_client_goal_state.h>
 #include <airsim_moveit_navigation/AirSim_NavigationAction.h>
 
+#include <octomap/octomap.h>
 #include <octomap/OcTree.h>
+#include <octomap_msgs/Octomap.h>
+#include <octomap_msgs/conversions.h>
+
 
 #include "vehicles/multirotor/api/MultirotorRpcLibClient.hpp"
 
@@ -35,12 +40,6 @@
 #include <cmath>
 #include <queue>
 #include <unistd.h>
-#define XMIN -30
-#define XMAX 30
-#define YMIN -30
-#define YMAX 30
-#define ZMIN 0.2
-#define ZMAX 25
 
 #define EPSILON 1e-4
 
@@ -64,20 +63,24 @@ class Quadrotor{
         airsim_moveit_navigation::AirSim_NavigationFeedback feedback_;
         airsim_moveit_navigation::AirSim_NavigationResult result_;
 
-        bool odom_received,trajectory_received;
+        bool odom_received, odom_2_received,trajectory_received;
         bool isPathValid;
         bool collision;
-
+         
         tf2_ros::Buffer tf_buffer;
 
         geometry_msgs::TransformStamped base_link_to_world_ned;
 
-        geometry_msgs::Pose odometry_information;
+        geometry_msgs::Pose odometry_information, odometry_2_information;
+        geometry_msgs::Pose odometry_information_enu;
         std::vector<geometry_msgs::Pose> trajectory;
         
-        ros::Subscriber base_sub,plan_sub,goal_sub,distance_sub;
+        ros::Subscriber base_sub, base_2_sub, plan_sub,goal_sub,distance_sub,path_sub,nbv_path_sub,multiagent_nbv_path_sub,rotate_sub;
         ros::Publisher distance_pub;
-        ros::Publisher path_pub;
+        ros::Publisher path_pub, path_2_pub;
+        ros::Publisher rrt_pub;
+        ros::Publisher uav_pause_pub;
+        ros::Publisher uav_moving_pub;
 
         ros::ServiceClient planning_scene_service;
 
@@ -90,15 +93,29 @@ class Quadrotor{
         double previousY;
         double previousZ;
 
-        nav_msgs::Path path;
+        double previous2X;
+        double previous2Y;
+        double previous2Z;
+
+        nav_msgs::Path path, path2;
         
         bool traversing;
 
+        bool rotate_to_center;
+
+        bool moveit_octomap_updated;
+
+        bool last_move_free_space;
+
+        std_msgs::Bool uav_moving;
+        
         double velocity;
 
         double collisionDistance;
 
         double collisionTime;
+
+        int pause_interval;
 
         msr::airlib::MultirotorRpcLibClient client;
         
@@ -112,13 +129,29 @@ class Quadrotor{
 
         void poseCallback(const nav_msgs::Odometry::ConstPtr & msg);
 
+        void pose2Callback(const nav_msgs::Odometry::ConstPtr & msg);
+
         void planCallback(const moveit_msgs::DisplayTrajectory::ConstPtr& msg);
 
         void executeCB(const airsim_moveit_navigation::AirSim_NavigationGoalConstPtr &goal);
 
         void computePathLengthCB(const geometry_msgs::Point::ConstPtr &path);
 
+        void computeRRTPathCB(const geometry_msgs::Point::ConstPtr &path);
+
+        void computeNBVPathCB(const geometry_msgs::Point::ConstPtr &path);
+
+        void rotateDroneCB(const geometry_msgs::Point::ConstPtr &POI);
+
+        void computeMultiAgentNBVPathCB(const geometry_msgs::Pose::ConstPtr &path);
+        
         void moveFromObstacle(void);
+
+        void updateMoveitOctomap(void);
+
+        geometry_msgs::Pose findFreeNeighbor(int neighbors);
+
+        int numFreeNeighbors(octomap::OcTreeKey key);
     
     public:
         Quadrotor(ros::NodeHandle& nh, std::string name);

@@ -42,13 +42,19 @@ void callback(const sensor_msgs::ImageConstPtr& depth_data, const sensor_msgs::I
 
 int main (int argc, char **argv)
 {
-  ros::init(argc, argv, "nagvigation_client");
+  ros::init(argc, argv, "depth_segmentation");
 
-  ros::NodeHandle nh;
+  ros::NodeHandle nh("~");
+  std::string depth_segmented_topic;
+  std::string depth_camera_topic;
+  std::string segmented_camera_topic;
+  nh.param<std::string>("depth_segmentation/depth_segmented_topic", depth_segmented_topic, "/DepthSegmented");
+  nh.param<std::string>("depth_segmentation/depth_camera_topic", depth_camera_topic, "/DepthCamera");
+  nh.param<std::string>("depth_segmentation/segmented_camera_topic", segmented_camera_topic, "/SegmentedCamera");
 
-  pub_ = nh.advertise<sensor_msgs::Image>("/airsim_node/drone_1/front_center_custom_depth_segmented/DepthSegmented", 1);
-  message_filters::Subscriber<sensor_msgs::Image> depth_sub(nh, "/airsim_node/drone_1/front_center_custom_depth/DepthPerspective", 1);
-  message_filters::Subscriber<sensor_msgs::Image> segmentation_sub(nh, "/airsim_node/drone_1/front_center_custom_segmentation/Segmentation", 1);
+  pub_ = nh.advertise<sensor_msgs::Image>(depth_segmented_topic, 1);
+  message_filters::Subscriber<sensor_msgs::Image> depth_sub(nh, depth_camera_topic, 1);
+  message_filters::Subscriber<sensor_msgs::Image> segmentation_sub(nh, segmented_camera_topic, 1);
 
   typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> MySyncPolicy;
   // ApproximateTime takes a queue size as its constructor argument, hence MySyncPolicy(10)

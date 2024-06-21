@@ -1,0 +1,31 @@
+<launch>
+	<arg name="resolution" default="1.0" />
+
+	<node pkg="octomap_server" type="octomap_server_node" name="octomap_server">
+		<param name="resolution" value="$(arg resolution)" /> <!-- resolution 2 -->
+		<param name="frame_id" type="string" value="world_enu" />
+		<param name="sensor_model/max_range" value="40.0" />
+		<remap from="cloud_in" to="/airsim_node/drone_1/lidar/LidarCustom" />
+	</node>
+
+	<node pkg="octomap_server" type="octomap_server_node_trimmed" name="octomap_server_trimmed">
+		<param name="resolution" value="$(arg resolution)" /> <!-- resolution 2 -->
+		<param name="frame_id" type="string" value="world_enu" />
+		<param name="sensor_model/max_range" value="40.0" />
+		<remap from="cloud_in" to="/airsim_node/drone_1/lidar/LidarCustomTrimmed" />
+	</node>
+
+	<node pkg="octomap_server" type="octomap_server_node_highres" name="octomap_server_highres">
+		<param name="resolution" value="0.1" /> <!-- resolution 2 -->
+		<param name="frame_id" type="string" value="world_enu" />
+		<param name="sensor_model/max_range" value="40.0" />
+		<remap from="cloud_in" to="/airsim_node/drone_1/lidar/LidarCustom" />
+	</node>
+
+	<node pkg="octomap_server" type="airsim_zFilter" name="airsim_zFilter" respawn="true">
+		<param name="resolution" value="$(arg resolution)" />
+		<param name="trimmed_height" value="2" />
+	</node>
+
+	<node pkg="octomap_server" type="airsim_visitedPoints_Publisher" name="airsim_visitedPoints_Publisher" output="screen" respawn="true"></node>
+</launch>

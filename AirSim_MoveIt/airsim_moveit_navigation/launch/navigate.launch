@@ -1,5 +1,14 @@
 <launch>
     <node name="airsim_navigator" pkg="airsim_moveit_navigation" type="airsim_navigator" respawn="false" output="screen" launch-prefix="gdb -ex run --args">
         <param name="/planning_plugin" value="ompl_interface/OMPLPlanner"/>
+        <param name="planning_attempts" value="10" />
+        <param name="planning_time" value="5.0" />
+        <param name="x_min" value="-70" />
+        <param name="x_max" value="70" />
+        <param name="y_min" value="-70" />
+        <param name="y_max" value="70" />
+        <param name="z_min" value="0.2" />
+        <param name="z_max" value="25" />
+        <param name="planning_algorithm" value="RRTstar" />
     </node>
 </launch>

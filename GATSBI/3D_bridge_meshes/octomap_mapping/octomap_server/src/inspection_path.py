@@ -25,7 +25,7 @@ def talker():
     #path.poses.append(pose)
     #path_pub.publish(path)
 
-    reader = csv.reader(open('/home/user/bridgeInspection/inspectionPath.csv', 'rb'), delimiter=",")
+    reader = csv.reader(open('/home/user/GATSBI_Journal/CollegePark/college_park_bridge_inspectionPath_6.csv', 'rb'), delimiter=",")
     count = 0
     for row in reader:
         if count == 0:
@@ -35,8 +35,8 @@ def talker():
         pose.header = h
         pose.pose.position.x = float(row[0])
         pose.pose.position.y = float(row[1])
-        pose.pose.position.z = float(row[2]) - 0.5
-        converted = tf.transformations.quaternion_from_euler(0,0,float(row[3]))
+        pose.pose.position.z = float(row[2])
+        converted = tf.transformations.quaternion_from_euler(0,float(row[4]),float(row[3]))
         pose.pose.orientation.x = converted[0]
         pose.pose.orientation.y = converted[1]
         pose.pose.orientation.z = converted[2]

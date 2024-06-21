@@ -13,11 +13,11 @@
 // typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
 // ros::Publisher occArrayTrimmed_pub;
 float thresholdOcc = 1.0;
-int resolution = 0.5;
+double resolution;
 pcl::PointCloud<pcl::PointXYZ>::Ptr cloudOccFull (new pcl::PointCloud<pcl::PointXYZ>);
 visualization_msgs::MarkerArray zFiltered;
 uint32_t shape = visualization_msgs::Marker::CUBE;
-float trimmedHeight = 1; // 3 is standard
+double trimmedHeight; // 3 is standard
 std::vector<double> outputVector;
 std_msgs::Float64MultiArray outputSize;
 
@@ -70,6 +70,10 @@ void trimmed_cb(const octomap_msgs::Octomap& input){ // occupancy tree call back
 int main(int argc, char** argv){
 	ros::init(argc, argv, "zFilter");
 	ros::NodeHandle n;
+
+    n.param<double>("/hardware_zFilter/resolution", resolution, 0.5);
+    n.param<double>("/hardware_zFilter/trimmed_height", trimmedHeight, 1);
+    
 	ros::Publisher output_pub = n.advertise<pcl::PointCloud<pcl::PointXYZ>> ("/zFiltered",1,true);
 	ros::Publisher outputSize_pub = n.advertise<std_msgs::Float64MultiArray> ("/zFilteredSize",1,true);
 	ros::Publisher zFiltered_pub = n.advertise<visualization_msgs::MarkerArray>("/zFiltered_Markers",1,true);

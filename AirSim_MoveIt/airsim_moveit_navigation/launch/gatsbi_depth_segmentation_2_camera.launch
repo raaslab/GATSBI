@@ -1,0 +1,14 @@
+<launch>
+  <node name="depth_segmentation" pkg="airsim_moveit_navigation" type="depth_segmentation" output="log" respawn="true">
+    <param name="depth_segmentation/depth_segmented_topic" value="/airsim_node/drone_1/front_center_custom_depth_segmented/DepthSegmented" />
+    <param name="depth_segmentation/depth_camera_topic" value="/airsim_node/drone_1/front_center_custom_depth/DepthPerspective" />
+    <param name="depth_segmentation/segmented_camera_topic" value="/airsim_node/drone_1/front_center_custom_segmentation/Segmentation" />
+  </node>
+
+  <node name="depth_segmentation_topdown" pkg="airsim_moveit_navigation" type="depth_segmentation" output="log" respawn="true">
+    <param name="depth_segmentation/depth_segmented_topic" value="/airsim_node/drone_1/down_center_custom_depth_segmented/DepthSegmented" />
+    <param name="depth_segmentation/depth_camera_topic" value="/airsim_node/drone_1/down_center_custom_depth/DepthPerspective" />
+    <param name="depth_segmentation/segmented_camera_topic" value="/airsim_node/drone_1/down_center_custom_segmentation/Segmentation" />
+  </node>
+
+</launch>

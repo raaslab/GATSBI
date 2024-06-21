@@ -1,0 +1,22 @@
+<launch>
+    <!-- Launch node with parameters -->
+    <node name="point_cloud_filter" pkg="point_cloud_processing" type="airsim_depth_pointcloud_filter" output="screen">
+        <param name="input_topic" value="/airsim_node/drone_1/lidar/LidarCustom_unfiltered"/>
+        <param name="output_topic" value="/airsim_node/drone_1/lidar/LidarCustom_filtered"/>
+    </node>
+
+    <node name="point_cloud_filter_trimmed" pkg="point_cloud_processing" type="airsim_depth_pointcloud_filter" output="screen">
+        <param name="input_topic" value="/airsim_node/drone_1/lidar/LidarCustomTrimmed_unfiltered"/>
+        <param name="output_topic" value="/airsim_node/drone_1/lidar/LidarCustomTrimmed_filtered"/>
+    </node>
+
+    <node name="point_cloud_filter" pkg="point_cloud_processing" type="airsim_depth_pointcloud_filter" output="screen">
+        <param name="input_topic" value="/airsim_node/drone_1/lidar/LidarCustom_unfiltered_down"/>
+        <param name="output_topic" value="/airsim_node/drone_1/lidar/LidarCustom_filtered_down"/>
+    </node>
+
+    <node name="point_cloud_filter_trimmed" pkg="point_cloud_processing" type="airsim_depth_pointcloud_filter" output="screen">
+        <param name="input_topic" value="/airsim_node/drone_1/lidar/LidarCustomTrimmed_unfiltered_down"/>
+        <param name="output_topic" value="/airsim_node/drone_1/lidar/LidarCustomTrimmed_filtered_down"/>
+    </node>
+</launch>

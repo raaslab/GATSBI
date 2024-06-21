@@ -1,7 +1,7 @@
 <launch>
 	<node pkg="octomap_server" type="airsim_MODGATSBI" name="airsim_MODGATSBI">
-		<param name="resolution" type="double" value="1.0" />
-		<param name="markerSize" type="double" value="1.0" />
+		<param name="resolution" type="double" value="2.0" />
+		<param name="markerSize" type="double" value="2.0" />
 		<param name="checkDistance" type="double" value="25.0" />
 		<param name="replanningTime" type="int" value="60" />
 	</node>

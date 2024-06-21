@@ -5,20 +5,37 @@ Quadrotor::Quadrotor(ros::NodeHandle& nh, std::string name) :
     action_name_(name)
 {
     odom_received = false;
+    odom_2_received = false;
     trajectory_received = false;
     collision = false;
 
     current_map = NULL;
 
+    rotate_to_center = true;
+
+    moveit_octomap_updated = false;
+    
+    uav_moving.data = false;
+
     as_.start();
 
     base_sub = nh.subscribe<nav_msgs::Odometry>("/airsim_node/drone_1/odom_local_ned",10,&Quadrotor::poseCallback,this);
+    base_2_sub = nh.subscribe<nav_msgs::Odometry>("/airsim_node/drone_2/odom_local_ned",10,&Quadrotor::pose2Callback,this);
+
     plan_sub = nh.subscribe<moveit_msgs::DisplayTrajectory>("/move_group/display_planned_path",1,&Quadrotor::planCallback,this);
     distance_sub = nh.subscribe<geometry_msgs::Point>("/compute_path/point",1,&Quadrotor::computePathLengthCB,this);
+    path_sub = nh.subscribe<geometry_msgs::Point>("/compute_rrt_path",1,&Quadrotor::computeRRTPathCB,this);
+    nbv_path_sub = nh.subscribe<geometry_msgs::Point>("/compute_nbv_path",1,&Quadrotor::computeNBVPathCB,this);
+    multiagent_nbv_path_sub = nh.subscribe<geometry_msgs::Pose>("/compute_multiagentnbv_path",1,&Quadrotor::computeMultiAgentNBVPathCB,this);    
+    rotate_sub = nh.subscribe<geometry_msgs::Point>("/rotate_to_POI",1,&Quadrotor::rotateDroneCB,this);
 
     distance_pub = nh.advertise<std_msgs::Float64>("/compute_path/length",1);
     path_pub = nh.advertise<nav_msgs::Path>("/path",1);
+    path_2_pub = nh.advertise<nav_msgs::Path>("/path_2",1);
 
+    rrt_pub = nh.advertise<geometry_msgs::PoseArray>("/rrt_path", 1);
+    uav_pause_pub = nh.advertise<std_msgs::Bool>("/drone_trajectory_paused", 1);
+    uav_moving_pub = nh.advertise<std_msgs::Bool>("/uav_moving", 1);
     move_group.reset(new moveit::planning_interface::MoveGroupInterface(PLANNING_GROUP));
     robot_model_loader::RobotModelLoader robot_model_loader("robot_description");
     robot_model::RobotModelPtr kmodel = robot_model_loader.getModel();
@@ -26,9 +43,32 @@ Quadrotor::Quadrotor(ros::NodeHandle& nh, std::string name) :
 
     planning_scene_service = nh.serviceClient<moveit_msgs::GetPlanningScene>("/get_planning_scene");
 
-    move_group->setPlannerId("RRTConnectkConfigDefault");
-    move_group->setNumPlanningAttempts(10);
-    move_group->setPlanningTime(10);
+    int planning_attempts = 10;
+    float planning_time = 5;
+    float XMIN, XMAX, YMIN, YMAX, ZMIN, ZMAX;
+    std::string planning_algorithm;
+    nh.param<int>("/airsim_navigator/planning_attempts", planning_attempts, 10);
+    nh.param<float>("/airsim_navigator/planning_time", planning_time, 10.0);
+    nh.param<float>("/airsim_navigator/x_min", XMIN, -70);
+    nh.param<float>("/airsim_navigator/x_max", XMAX, 70);
+    nh.param<float>("/airsim_navigator/y_min", YMIN, -70);
+    nh.param<float>("/airsim_navigator/y_max", YMAX, 70);
+    nh.param<float>("/airsim_navigator/z_min", ZMIN, 0.2);
+    nh.param<float>("/airsim_navigator/z_max", ZMAX, 25);
+    nh.param<std::string>("/airsim_navigator/planning_algorithm", planning_algorithm, "RRTstar");
+    nh.param<bool>("/airsim_navigator/rotate_to_center", rotate_to_center, true);
+
+    ROS_INFO("Planning Attempts: %d", planning_attempts);
+    ROS_INFO("Planning Time: %.2f", planning_time);
+    ROS_INFO("X Boundaries: [%.2f, %.2f]", XMIN, XMAX);
+    ROS_INFO("Y Boundaries: [%.2f, %.2f]", YMIN, YMAX);
+    ROS_INFO("Z Boundaries: [%.2f, %.2f]", ZMIN, ZMAX);
+    ROS_INFO("Planning Algorithm: %s", planning_algorithm.c_str());
+    ROS_INFO("Use Orientation as Center to Rotate To: %s", rotate_to_center ? "True" : "False");
+
+    move_group->setPlannerId(planning_algorithm.c_str());
+    move_group->setNumPlanningAttempts(planning_attempts);
+    move_group->setPlanningTime(planning_time);
     move_group->setWorkspace(XMIN,YMIN,ZMIN,XMAX,YMAX,ZMAX);
 
     start_state.reset(new robot_state::RobotState(move_group->getRobotModel()));
@@ -40,8 +80,15 @@ Quadrotor::Quadrotor(ros::NodeHandle& nh, std::string name) :
     previousY = 0.0;
     previousZ = 0.0;
 
+    previous2X = 0.0;
+    previous2Y = 4.0;
+    previous2Z = 0.0;
+
     path.header.frame_id = "world_enu";
     path.header.seq = 0;
+
+    path2.header.frame_id = "world_enu";
+    path2.header.seq = 0;
 
     collisionDistance = 0.7;
 
@@ -49,13 +96,104 @@ Quadrotor::Quadrotor(ros::NodeHandle& nh, std::string name) :
 
     velocity = 1.0;
 
-    client.enableApiControl(true);
-    client.armDisarm(true);
+    pause_interval = 4;
+
+    last_move_free_space = false;
 }
 
 void Quadrotor::moveFromObstacle(void)
 {
 
+}
+
+int Quadrotor::numFreeNeighbors(octomap::OcTreeKey key)
+{
+
+    int free_voxels = 0;
+    octomap::OcTreeNode* result;
+
+    for(int i = -1; i <= 1; i++)
+    {
+        for(int j = -1; j <= 1; j++)
+        {
+            for(int k = -1; k <= 1; k++)
+            {
+                if(i == 0 && j == 0 && k == 0)
+                {
+                  continue;
+                }
+                octomap::OcTreeKey neighbor_key = key;
+                neighbor_key[0] += i;
+                neighbor_key[1] += j;
+                neighbor_key[2] += k;
+                result = current_map->search(neighbor_key);
+                if(result)
+                {
+                    if(!current_map->isNodeOccupied(result))
+                    {
+                        free_voxels++;
+                    }
+                }
+            }
+        }
+    }
+
+    return free_voxels;
+
+}
+
+geometry_msgs::Pose Quadrotor::findFreeNeighbor(int neighbors)
+{
+    int opp_neighbors = -1 * neighbors;
+    moveit_octomap_updated = false;
+    while(!moveit_octomap_updated)
+    {
+        updateMoveitOctomap();
+        ros::Duration(0.2).sleep();
+    }
+    octomap::OcTreeNode* result;
+    octomap::OcTreeKey free_neighbor_key;
+    int num_of_free_voxels = 0;
+    for(int i = opp_neighbors; i <= neighbors; i++)
+    {
+        for(int j = opp_neighbors; j <= neighbors; j++)
+        {
+            for(int k = opp_neighbors; k <= neighbors; k++)
+            {
+                if(i == 0 && j == 0 && k == 0)
+                {
+                  continue;
+                }
+                octomap::OcTreeKey neighbor_key = current_map->coordToKey(odometry_information.position.x, odometry_information.position.y, odometry_information.position.z);
+                neighbor_key[0] += i;
+                neighbor_key[1] += j;
+                neighbor_key[2] += k;
+                result = current_map->search(neighbor_key);
+                if(result)
+                {
+                    if(!current_map->isNodeOccupied(result))
+                    {
+
+                        int free_voxels = numFreeNeighbors(neighbor_key);
+                        if(free_voxels > num_of_free_voxels)
+                        {
+                            num_of_free_voxels = free_voxels;
+                            free_neighbor_key = neighbor_key;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    octomap::point3d point = current_map->keyToCoord(free_neighbor_key);
+    geometry_msgs::Pose freeSpace;
+    freeSpace.position.x = point.x();
+    freeSpace.position.y = point.y();
+    freeSpace.position.z = point.z();
+    
+
+    return freeSpace;
 }
 
 void Quadrotor::executeCB(const airsim_moveit_navigation::AirSim_NavigationGoalConstPtr &goal)
@@ -67,16 +205,393 @@ void Quadrotor::executeCB(const airsim_moveit_navigation::AirSim_NavigationGoalC
         ros::Duration(0.2).sleep();
     }
     traversing = true;
+
     feedback_.feedback_pose = odometry_information;
+     
+    geometry_msgs::Pose center;
+    center.position.x = goal->goal_pose.orientation.x;
+    center.position.y = goal->goal_pose.orientation.y;
+    center.position.z = goal->goal_pose.orientation.z;
+
+    geometry_msgs::Pose goal_ned_transformed = transformPose(goal->goal_pose, "world_ned", "world_enu");
+    geometry_msgs::Pose center_transformed = transformPose(center, "world_ned", "world_enu");
 
     std::vector<double> target(7);
     target[0] = goal->goal_pose.position.x;
     target[1] = goal->goal_pose.position.y;
     target[2] = goal->goal_pose.position.z;
-    target[3] = goal->goal_pose.orientation.x;
-    target[4] = goal->goal_pose.orientation.y;
-    target[5] = goal->goal_pose.orientation.z;
-    target[6] = goal->goal_pose.orientation.w;
+
+    std::vector<double> start_state_(7);
+    start_state_[0] = odometry_information.position.x;
+    start_state_[1] = odometry_information.position.y;
+    start_state_[2] = odometry_information.position.z;
+
+    if(rotate_to_center)
+    { 
+        target[3] = odometry_information.orientation.x;
+        target[4] = odometry_information.orientation.y;
+        target[5] = odometry_information.orientation.z;
+        target[6] = odometry_information.orientation.w;
+
+        start_state_[3] = odometry_information.orientation.x;
+        start_state_[4] = odometry_information.orientation.y;
+        start_state_[5] = odometry_information.orientation.z;
+        start_state_[6] = odometry_information.orientation.w;
+
+    }
+    else
+    {
+        target[3] = goal->goal_pose.orientation.x;
+        target[4] = goal->goal_pose.orientation.y;
+        target[5] = goal->goal_pose.orientation.z;
+        target[6] = goal->goal_pose.orientation.w;
+
+        start_state_[3] = odometry_information_enu.orientation.x;
+        start_state_[4] = odometry_information_enu.orientation.y;
+        start_state_[5] = odometry_information_enu.orientation.z;
+        start_state_[6] = odometry_information_enu.orientation.w;
+    }
+
+    
+    
+
+    this->move_group->setJointValueTarget(target);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+
+    this->collision = false;
+    ROS_INFO("Try to start from [%lf,%lf,%lf] with orientation [%lf, %lf, %lf, %lf]",odometry_information.position.x,odometry_information.position.y,odometry_information.position.z,odometry_information_enu.orientation.x,odometry_information_enu.orientation.y,odometry_information_enu.orientation.z,odometry_information_enu.orientation.w);
+    ROS_INFO("Try to go to [%lf,%lf,%lf] with orientation [%lf, %lf, %lf, %lf]",target[0], target[1], target[2],goal->goal_pose.orientation.x,goal->goal_pose.orientation.y,goal->goal_pose.orientation.z,goal->goal_pose.orientation.w);
+    this->start_state->setVariablePositions(start_state_);
+    this->move_group->setStartState(*start_state);
+
+    moveit::core::MoveItErrorCode moveiterrorcode = move_group->plan(plan);
+    this->isPathValid = (moveiterrorcode == moveit::core::MoveItErrorCode::SUCCESS);
+    //if(!this->isPathValid)
+    //{
+    //    ROS_INFO("Invalid Moveit Error Code: %d", moveiterrorcode.val);
+    //    ROS_INFO("Attempting to move away from collision");
+    //    moveFromObstacle();
+    //}
+
+    if(!this->isPathValid && !last_move_free_space){
+        ROS_INFO("Can't find trajectory, moving to neighbor with most free space and trying again.");
+        ROS_INFO("Moveit Error Code: %d", moveiterrorcode.val);
+
+
+        geometry_msgs::Pose freeSpace = findFreeNeighbor(1);
+        geometry_msgs::Pose freeSpace_transformed = transformPose(freeSpace, "world_ned", "world_enu");
+        double dist = sqrt(pow(freeSpace.position.x - odometry_information.position.x,2) + pow(freeSpace.position.y - odometry_information.position.y,2) + pow(freeSpace.position.z - odometry_information.position.z,2));
+        double wait_Time = dist * velocity; 
+        wait_Time += 1.5;
+        //uav_moving.data = true;
+        //uav_moving_pub.publish(uav_moving);
+        //sleep(0.2);
+        ROS_INFO("Moving drone to free space neighbor.");
+        client.moveToPositionAsync(freeSpace_transformed.position.x, freeSpace_transformed.position.y, freeSpace_transformed.position.z, 1, 3);
+        ros::Duration(wait_Time + 1.1).sleep();
+
+        last_move_free_space = true;
+        feedback_.feedback_pose = odometry_information;
+        start_state_[0] = odometry_information.position.x;
+        start_state_[1] = odometry_information.position.y;
+        start_state_[2] = odometry_information.position.z;
+
+        if(rotate_to_center)
+        { 
+            start_state_[3] = odometry_information.orientation.x;
+            start_state_[4] = odometry_information.orientation.y;
+            start_state_[5] = odometry_information.orientation.z;
+            start_state_[6] = odometry_information.orientation.w;
+
+        }
+        else
+        {
+            start_state_[3] = odometry_information_enu.orientation.x;
+            start_state_[4] = odometry_information_enu.orientation.y;
+            start_state_[5] = odometry_information_enu.orientation.z;
+            start_state_[6] = odometry_information_enu.orientation.w;
+        }
+
+        ROS_INFO("Try to start from [%lf,%lf,%lf] with orientation [%lf, %lf, %lf, %lf]",odometry_information.position.x,odometry_information.position.y,odometry_information.position.z,odometry_information_enu.orientation.x,odometry_information_enu.orientation.y,odometry_information_enu.orientation.z,odometry_information_enu.orientation.w);
+        ROS_INFO("Try to go to [%lf,%lf,%lf] with orientation [%lf, %lf, %lf, %lf]",target[0], target[1], target[2],goal->goal_pose.orientation.x,goal->goal_pose.orientation.y,goal->goal_pose.orientation.z,goal->goal_pose.orientation.w);
+        this->start_state->setVariablePositions(start_state_);
+        this->move_group->setStartState(*start_state);
+
+        moveit::core::MoveItErrorCode moveiterrorcode = move_group->plan(plan);
+        this->isPathValid = (moveiterrorcode == moveit::core::MoveItErrorCode::SUCCESS);
+    }
+
+    
+    if(this->isPathValid){
+        last_move_free_space = false;
+        this->plan_start_state = plan.start_state_;
+        this->plan_trajectory = plan.trajectory_;
+        while(!trajectory_received){
+            ROS_INFO("Waiting for trajectory");
+            ros::Duration(0.2).sleep();
+        }
+
+        ROS_INFO("Moving through moveit planned trajectory");
+        bool trajectory_colliding = false;
+        for(int i=1;i<trajectory.size();i++)
+        {
+            if(as_.isPreemptRequested())
+            {
+                as_.setPreempted();
+                ROS_INFO("Trajectory cancelled");
+                break;
+            }
+            ROS_INFO("Trajectory step: [%d]", i);
+            ROS_INFO("Check for collision");
+            
+            bool collision_free = true;
+  
+            for(int j = i; j < 3 && j < trajectory.size(); j++)
+            {
+                if(checkCollision(trajectory[j]))
+                {
+                    ROS_INFO("Current trajectory step will send drone into collision. Abort trajectory and move to neighbor with highest number of free neighbors.");
+                    collision_free = false;
+                    geometry_msgs::Pose freeSpace = findFreeNeighbor(2);
+                    geometry_msgs::Pose freeSpace_transformed = transformPose(freeSpace, "world_ned", "world_enu");
+                    double dist = sqrt(pow(freeSpace.position.x - odometry_information.position.x,2) + pow(freeSpace.position.y - odometry_information.position.y,2) + pow(freeSpace.position.z - odometry_information.position.z,2));
+                    double wait_Time = dist * velocity; 
+                    wait_Time += 1.5;
+                    //uav_moving.data = true;
+                    //uav_moving_pub.publish(uav_moving);
+                    //sleep(0.2);
+                    ROS_INFO("Moving drone to free space neighbor.");
+                    client.moveToPositionAsync(freeSpace_transformed.position.x, freeSpace_transformed.position.y, freeSpace_transformed.position.z, 1, 3);
+                    trajectory_colliding = true;
+                    ros::Duration(wait_Time + 1.1).sleep();
+                    //uav_moving.data = false;
+                    //uav_moving_pub.publish(uav_moving);
+                    //sleep(0.2);
+                    break;
+                }
+            }
+            if(!collision_free)
+            {
+                break;
+            }
+
+            geometry_msgs::Pose transformed = transformPose(trajectory[i], "world_ned", "world_enu");
+            double dist = sqrt(pow(trajectory[i].position.x - odometry_information.position.x,2) + pow(trajectory[i].position.y - odometry_information.position.y,2) + pow(trajectory[i].position.z - odometry_information.position.z,2));
+            double wait_Time = dist * velocity; 
+            wait_Time += 1.5;
+            if(wait_Time > 7)
+            {
+                ROS_INFO("Wait time too high, most likely in collision.");
+                geometry_msgs::Pose freeSpace = findFreeNeighbor(2);
+                geometry_msgs::Pose freeSpace_transformed = transformPose(freeSpace, "world_ned", "world_enu");
+                double dist = sqrt(pow(freeSpace.position.x - odometry_information.position.x,2) + pow(freeSpace.position.y - odometry_information.position.y,2) + pow(freeSpace.position.z - odometry_information.position.z,2));
+                double wait_Time = dist * velocity; 
+                wait_Time += 1.5;
+                //uav_moving.data = true;
+                //uav_moving_pub.publish(uav_moving);
+                //sleep(0.2);
+                ROS_INFO("Moving drone to free space neighbor.");
+                client.moveToPositionAsync(freeSpace_transformed.position.x, freeSpace_transformed.position.y, freeSpace_transformed.position.z, 1, 3);
+                trajectory_colliding = true;
+                ros::Duration(wait_Time + 1.1).sleep();
+                break;
+            }
+            //uav_moving.data = true;
+            //uav_moving_pub.publish(uav_moving);
+            //sleep(0.2);
+            ROS_INFO("Wait time: %f", wait_Time);
+            client.moveToPositionAsync(transformed.position.x, transformed.position.y, transformed.position.z, 1, 3);
+            ros::Duration(wait_Time + 1.1).sleep();
+            //uav_moving.data = false;
+            //uav_moving_pub.publish(uav_moving);
+            //sleep(0.2);
+
+            msr::airlib::CollisionInfo collision = client.simGetCollisionInfo();
+            if(collision.has_collided)
+            {
+                ROS_INFO("Robot has collided");
+                ROS_INFO("Previous Collision Time: %.2f", collisionTime);
+                ROS_INFO("Current Collision Time: %lu", collision.time_stamp);
+                
+                if(collision.time_stamp > collisionTime)
+                {
+                    //uav_moving.data = true;
+                    //uav_moving_pub.publish(uav_moving);
+                    //sleep(0.2);
+                    ROS_INFO("Robot just collided, correction position");
+                    collisionTime = collision.time_stamp;
+                    geometry_msgs::Pose collisionPosition;
+                    collisionPosition.position.x = collision.impact_point[0];
+                    collisionPosition.position.y = collision.impact_point[1];
+                    collisionPosition.position.z = collision.impact_point[2];
+
+                    geometry_msgs::Pose collisionTransformed = transformPose(collisionPosition, "world_enu", "world_ned");
+
+                    geometry_msgs::Pose freePosition;
+                    freePosition.position.x = (2 * odometry_information.position.x) - collisionTransformed.position.x;
+                    freePosition.position.y = (2 * odometry_information.position.y) - collisionTransformed.position.y;
+                    freePosition.position.z = (2 * odometry_information.position.z) - collisionTransformed.position.z;
+                    freePosition.position.x = (2 * freePosition.position.x) - collisionTransformed.position.x;
+                    freePosition.position.y = (2 * freePosition.position.y) - collisionTransformed.position.y;
+                    freePosition.position.z = (2 * freePosition.position.z) - collisionTransformed.position.z;
+                    transformed = transformPose(freePosition, "world_ned", "world_enu");
+                    
+                    client.moveToPositionAsync(transformed.position.x, transformed.position.y, transformed.position.z, 1, 3);
+                    ros::Duration(2).sleep();
+                    //uav_moving.data = false;
+                    //uav_moving_pub.publish(uav_moving);
+                    //sleep(0.2);
+                }
+            }
+
+            if(rotate_to_center)
+            {
+                double direction_y = center_transformed.position.y - transformed.position.y;
+                double direction_x = center_transformed.position.x - transformed.position.x;
+                double angle = atan2(direction_y, direction_x);
+
+                angle = angle * 180 / M_PI;
+
+                uav_moving.data = true;
+                uav_moving_pub.publish(uav_moving);
+                sleep(0.2);
+                client.rotateToYawAsync(angle, 3);
+                sleep(2);
+                uav_moving.data = false;
+                uav_moving_pub.publish(uav_moving);
+                sleep(0.2);
+            }
+            else
+            {
+                tf::Quaternion q(
+                    transformed.orientation.x,
+                    transformed.orientation.y,
+                    transformed.orientation.z,
+                    transformed.orientation.w);
+               
+                tf::Matrix3x3 m(q);
+                double roll, pitch, yaw;
+                m.getRPY(roll, pitch, yaw);
+                yaw = yaw * 180 / M_PI;
+
+                uav_moving.data = true;
+                uav_moving_pub.publish(uav_moving);
+                sleep(0.2);
+                client.rotateToYawAsync(yaw, 3);
+                sleep(2);
+                uav_moving.data = false;
+                uav_moving_pub.publish(uav_moving);
+                sleep(0.2);
+            }
+
+        }
+
+        if(rotate_to_center)
+        {
+            uav_moving.data = true;
+            uav_moving_pub.publish(uav_moving);
+            sleep(0.2);
+            double direction_y = center_transformed.position.y - goal_ned_transformed.position.y;
+            double direction_x = center_transformed.position.x - goal_ned_transformed.position.x;
+            double angle = atan2(direction_y, direction_x);
+
+            angle = angle * 180 / M_PI;
+
+            ROS_INFO("Target step orientation yaw: %f", angle);
+            client.rotateToYawAsync(angle, 3);
+            sleep(2);
+            uav_moving.data = false;
+            uav_moving_pub.publish(uav_moving);
+            sleep(0.2);
+        }
+        else
+        {
+            uav_moving.data = true;
+            uav_moving_pub.publish(uav_moving);
+            sleep(0.2);
+            tf::Quaternion q(
+                goal_ned_transformed.orientation.x,
+                goal_ned_transformed.orientation.y,
+                goal_ned_transformed.orientation.z,
+                goal_ned_transformed.orientation.w);
+            tf::Matrix3x3 m(q);
+            double roll, pitch, yaw;
+            m.getRPY(roll, pitch, yaw);
+
+            yaw = yaw * 180 / M_PI;
+            ROS_INFO("Target step orientation yaw: %f", yaw);
+            client.rotateToYawAsync(yaw, 3);
+            sleep(2);
+            uav_moving.data = false;
+            uav_moving_pub.publish(uav_moving);\
+            sleep(0.2);
+
+        }
+
+        if(trajectory_colliding)
+        {
+            ROS_INFO("Trajectory preempted");
+            this->trajectory_received = false;
+            this->odom_received = false;
+            result_.result_pose = feedback_.feedback_pose;
+            as_.setPreempted(result_);
+        }
+        else
+        {
+            ROS_INFO("Trajectory is traversed");
+            this->trajectory_received = false;
+            this->odom_received = false;
+            result_.result_pose = feedback_.feedback_pose;
+            as_.setSucceeded(result_);
+        }
+    }
+    else
+    {
+        ROS_INFO("Trajectory aborted");
+        ROS_INFO("Moveit Error Code: %d", moveiterrorcode.val);
+        result_.result_pose = feedback_.feedback_pose;
+        as_.setAborted(result_);
+    }
+    
+
+    traversing = false;
+    //return this->isPathValid;
+
+
+
+    // Code Below is for PredNBV/MAPNBV
+    /*
+    int timeOut = 0;
+    while(traversing && timeOut < 50){
+        ROS_INFO("Waiting for compute distance check to finish");
+        timeOut++;
+        ros::Duration(0.2).sleep();
+    }
+    traversing = true;
+    feedback_.feedback_pose = odometry_information;
+
+    geometry_msgs::Pose goal_transformed = transformPose(goal->goal_pose, "world_enu", "pointr");
+
+    geometry_msgs::Pose goal_ned_transformed = transformPose(goal->goal_pose, "world_ned", "pointr");
+
+    geometry_msgs::Pose center;
+    center.position.x = goal->goal_pose.orientation.x;
+    center.position.y = goal->goal_pose.orientation.y;
+    center.position.z = goal->goal_pose.orientation.z;
+
+    geometry_msgs::Pose center_transformed = transformPose(center, "world_ned", "pointr");
+
+    std_msgs::Bool paused;
+    paused.data = true;
+            
+    std::vector<double> target(7);
+    target[0] = goal_transformed.position.x;
+    target[1] = goal_transformed.position.y;
+    target[2] = goal_transformed.position.z;
+    target[3] = 0;
+    target[4] = 0;
+    target[5] = 0;
+    target[6] = 1;
 
     std::vector<double> start_state_(7);
     start_state_[0] = odometry_information.position.x;
@@ -91,8 +606,8 @@ void Quadrotor::executeCB(const airsim_moveit_navigation::AirSim_NavigationGoalC
     moveit::planning_interface::MoveGroupInterface::Plan plan;
 
     this->collision = false;
-    ROS_INFO("Try to start from [%lf,%lf,%lf] with orienation [%lf, %lf, %lf, %lf]",odometry_information.position.x,odometry_information.position.y,odometry_information.position.z,odometry_information.orientation.x,odometry_information.orientation.y,odometry_information.orientation.z,odometry_information.orientation.w);
-    ROS_INFO("Try to go to [%lf,%lf,%lf] with orienation [%lf, %lf, %lf, %lf]",goal->goal_pose.position.x,goal->goal_pose.position.y,goal->goal_pose.position.z,goal->goal_pose.orientation.x,goal->goal_pose.orientation.y,goal->goal_pose.orientation.z,goal->goal_pose.orientation.w);
+    ROS_INFO("Try to start from [%lf,%lf,%lf] with orientation [%lf, %lf, %lf, %lf]",odometry_information.position.x,odometry_information.position.y,odometry_information.position.z,odometry_information.orientation.x,odometry_information.orientation.y,odometry_information.orientation.z,odometry_information.orientation.w);
+    ROS_INFO("Try to go to [%lf,%lf,%lf] with orientation [%lf, %lf, %lf, %lf]",target[0], target[1], target[2],goal->goal_pose.orientation.x,goal->goal_pose.orientation.y,goal->goal_pose.orientation.z,goal->goal_pose.orientation.w);
     this->start_state->setVariablePositions(start_state_);
     this->move_group->setStartState(*start_state);
 
@@ -115,7 +630,8 @@ void Quadrotor::executeCB(const airsim_moveit_navigation::AirSim_NavigationGoalC
         }
 
         ROS_INFO("Moving through moveit planned trajectory");
-        for(int i=1;i<trajectory.size();i++){
+        for(int i=1;i<trajectory.size();i++)
+        {
             if(as_.isPreemptRequested())
             {
                 as_.setPreempted();
@@ -140,7 +656,7 @@ void Quadrotor::executeCB(const airsim_moveit_navigation::AirSim_NavigationGoalC
             }
             ROS_INFO("Wait time: %f", wait_Time);
             client.moveToPositionAsync(transformed.position.x, transformed.position.y, transformed.position.z, 1, 3);
-            ros::Duration(wait_Time + 0.1).sleep();
+            ros::Duration(wait_Time + 1.1).sleep();
 
             msr::airlib::CollisionInfo collision = client.simGetCollisionInfo();
             if(collision.has_collided)
@@ -172,35 +688,56 @@ void Quadrotor::executeCB(const airsim_moveit_navigation::AirSim_NavigationGoalC
                     ros::Duration(2).sleep();
                 }
             }
-            tf::Quaternion q(
-                trajectory[i].orientation.x,
-                trajectory[i].orientation.y,
-                trajectory[i].orientation.z,
-                trajectory[i].orientation.w);
+
+            double direction_y = center_transformed.position.y - transformed.position.y;
+            double direction_x = center_transformed.position.x - transformed.position.x;
+            double angle = atan2(direction_y, direction_x);
+
+            angle = angle * 180 / M_PI;
+
+            
+            //tf::Quaternion q(
+            //    trajectory[i].orientation.x,
+            //    trajectory[i].orientation.y,
+            //    trajectory[i].orientation.z,
+            //    trajectory[i].orientation.w);
            
-            tf::Matrix3x3 m(q);
-            double roll, pitch, yaw;
-            m.getRPY(roll, pitch, yaw);
-            yaw = yaw * 180 / M_PI;
-  
-            client.rotateToYawAsync(yaw, 3);
+            //tf::Matrix3x3 m(q);
+            //double roll, pitch, yaw;
+            //m.getRPY(roll, pitch, yaw);
+            //yaw = yaw * 180 / M_PI;
+            
+            client.rotateToYawAsync(angle, 3);
             sleep(2);
 
+            if((i % pause_interval) == 0)
+            {
+                uav_pause_pub.publish(paused);
+                sleep(7);
+            }
         }
 
-        tf::Quaternion q(
-            goal->goal_pose.orientation.x,
-            goal->goal_pose.orientation.y,
-            goal->goal_pose.orientation.z,
-            goal->goal_pose.orientation.w);
-        tf::Matrix3x3 m(q);
-        double roll, pitch, yaw;
-        m.getRPY(roll, pitch, yaw);
+        
+        //tf::Quaternion q(
+        //    goal->goal_pose.orientation.x,
+        //    goal->goal_pose.orientation.y,
+        //    goal->goal_pose.orientation.z,
+        //    goal->goal_pose.orientation.w);
+        //tf::Matrix3x3 m(q);
+        //double roll, pitch, yaw;
+        //m.getRPY(roll, pitch, yaw);
 
-        yaw = yaw * 180 / M_PI;
-  
-        ROS_INFO("Target step orientation yaw: %f", yaw);
-        client.rotateToYawAsync(yaw, 3);
+        //yaw = yaw * 180 / M_PI;
+        
+
+        double direction_y = center_transformed.position.y - goal_ned_transformed.position.y;
+        double direction_x = center_transformed.position.x - goal_ned_transformed.position.x;
+        double angle = atan2(direction_y, direction_x);
+
+        angle = angle * 180 / M_PI;
+
+        ROS_INFO("Target step orientation yaw: %f", angle);
+        client.rotateToYawAsync(angle, 3);
         sleep(3.5);
 
         ROS_INFO("Trajectory is traversed");
@@ -216,21 +753,29 @@ void Quadrotor::executeCB(const airsim_moveit_navigation::AirSim_NavigationGoalC
 
     traversing = false;
     //return this->isPathValid;
+    */
 }
 
 void Quadrotor::poseCallback(const nav_msgs::Odometry::ConstPtr & msg)
 {
     odometry_information = transformPose(msg->pose.pose, "world_enu", "world_ned");
+    odometry_information_enu = odometry_information;
+
     odometry_information.orientation.x = msg->pose.pose.orientation.x;
     odometry_information.orientation.y = msg->pose.pose.orientation.y;
     odometry_information.orientation.z = msg->pose.pose.orientation.z;
     odometry_information.orientation.w = msg->pose.pose.orientation.w;
+
+
     odom_received = true;
 
     if(double_equals(previousX, odometry_information.position.x) &&
        double_equals(previousY, odometry_information.position.y) &&
        double_equals(previousZ, odometry_information.position.z))
+    {
+        path_pub.publish(path);
         return;
+    }
 
     previousX = odometry_information.position.x;
     previousY = odometry_information.position.y;
@@ -247,9 +792,51 @@ void Quadrotor::poseCallback(const nav_msgs::Odometry::ConstPtr & msg)
     path_pub.publish(path);
 }
 
+void Quadrotor::pose2Callback(const nav_msgs::Odometry::ConstPtr & msg)
+{
+    odometry_2_information = transformPose(msg->pose.pose, "world_enu", "world_ned");
+
+    //Account for drone_2 offset
+    odometry_2_information.position.y += 4;
+
+    odometry_2_information.orientation.x = msg->pose.pose.orientation.x;
+    odometry_2_information.orientation.y = msg->pose.pose.orientation.y;
+    odometry_2_information.orientation.z = msg->pose.pose.orientation.z;
+    odometry_2_information.orientation.w = msg->pose.pose.orientation.w;
+    odom_2_received = true;
+
+    if(double_equals(previous2X, odometry_2_information.position.x) &&
+       double_equals(previous2Y, odometry_2_information.position.y) &&
+       double_equals(previous2Z, odometry_2_information.position.z))
+    {
+        path_2_pub.publish(path2);
+        return;
+    }
+
+    previous2X = odometry_2_information.position.x;
+    previous2Y = odometry_2_information.position.y;
+    previous2Z = odometry_2_information.position.z;
+
+    geometry_msgs::PoseStamped pose;
+    pose.pose = odometry_2_information;
+    path2.header.seq = path2.header.seq + 1;
+    pose.header.seq = path2.header.seq;
+    path2.header.stamp = ros::Time::now();
+    pose.header.stamp = path2.header.stamp;
+    path2.poses.push_back(pose);
+
+    path_2_pub.publish(path2);
+}
+
 void Quadrotor::planCallback(const moveit_msgs::DisplayTrajectory::ConstPtr& msg)
 {
-    if(!odom_received) return;
+    ROS_INFO("Got plan");
+    if(!odom_received)
+    {
+        ROS_INFO("Haven't received odom, returning");
+        return;
+    }
+    ROS_INFO("Odom updated, updating trajectory");
     trajectory.clear();
     for(auto robot_traj: msg->trajectory){
         for(auto point : robot_traj.multi_dof_joint_trajectory.points){
@@ -294,6 +881,315 @@ bool Quadrotor::checkCollision(geometry_msgs::Pose pose)
         
     }
     return false;
+}
+
+void Quadrotor::updateMoveitOctomap(void)
+{
+    moveit_msgs::GetPlanningScene srv;
+    srv.request.components.components = moveit_msgs::PlanningSceneComponents::OCTOMAP;
+    ros::spinOnce();
+    
+    if(planning_scene_service.call(srv)){
+        this->planning_scene->setPlanningSceneDiffMsg(srv.response.scene);
+        octomap_msgs::Octomap octomap = srv.response.scene.world.octomap.octomap;
+        
+        delete current_map;
+        current_map = (octomap::OcTree*)octomap_msgs::msgToMap(octomap);
+        moveit_octomap_updated = true;
+    }
+}
+
+void Quadrotor::computeRRTPathCB(const geometry_msgs::Point::ConstPtr &point)
+{
+    int timeOut = 0;
+    while(traversing && timeOut < 50){
+        ROS_INFO("Waiting for drone traversal to finish before checking distance");
+        timeOut++;
+        ros::Duration(0.2).sleep();
+    }
+    traversing = true;
+    this->trajectory_received = false;
+
+    geometry_msgs::Pose input_pose;
+    input_pose.position.x = point->x;
+    input_pose.position.y = point->y;
+    input_pose.position.z = point->z;
+
+    geometry_msgs::Pose transformed_Pose = transformPose(input_pose, "world_enu", "pointr");
+
+    ROS_INFO("Computing MoveIt distance from (%f,%f,%f) to (%f,%f,%f)", odometry_information.position.x, odometry_information.position.y, odometry_information.position.z,
+                                                                        transformed_Pose.position.x, transformed_Pose.position.y, transformed_Pose.position.z);
+    std::vector<double> target(7);
+    target[0] = transformed_Pose.position.x;
+    target[1] = transformed_Pose.position.y;
+    target[2] = transformed_Pose.position.z;
+    target[3] = odometry_information.orientation.x;
+    target[4] = odometry_information.orientation.y;
+    target[5] = odometry_information.orientation.z;
+    target[6] = odometry_information.orientation.w;
+
+    std::vector<double> start_state_(7);
+    start_state_[0] = odometry_information.position.x;
+    start_state_[1] = odometry_information.position.y;
+    start_state_[2] = odometry_information.position.z;
+    start_state_[3] = odometry_information.orientation.x;
+    start_state_[4] = odometry_information.orientation.y;
+    start_state_[5] = odometry_information.orientation.z;
+    start_state_[6] = odometry_information.orientation.w;
+
+    this->move_group->setJointValueTarget(target);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+
+    this->collision = false;
+    this->start_state->setVariablePositions(start_state_);
+    this->move_group->setStartState(*start_state);
+
+    moveit::core::MoveItErrorCode moveiterrorcode = move_group->plan(plan);
+    this->isPathValid = (moveiterrorcode == moveit::core::MoveItErrorCode::SUCCESS);
+    ROS_INFO("Moveit Error Code: %d", moveiterrorcode.val);
+    if(this->isPathValid){
+        ROS_INFO("Path is valid");
+        this->plan_start_state = plan.start_state_;
+        this->plan_trajectory = plan.trajectory_;
+        while(!trajectory_received){
+            ROS_INFO("Waiting for trajectory");
+            ros::Duration(0.2).sleep();
+        }
+        geometry_msgs::PoseArray rrt_path;
+        rrt_path.header.stamp = ros::Time::now();
+        rrt_path.header.frame_id = "world_enu";
+        for(int i=0;i<trajectory.size();i++){
+            ROS_INFO("Trajectory #:%d, Point: (%f, %f, %f)", i+1, trajectory[i].position.x, trajectory[i].position.y, trajectory[i].position.z);
+            geometry_msgs::Pose p;
+            p.position.x = trajectory[i].position.x;
+            p.position.y = trajectory[i].position.y;
+            p.position.z = trajectory[i].position.z;
+
+            //geometry_msgs::Pose transformed_back;
+            //transformed_back = transformPose(p, "pointr", "world_enu");
+            rrt_path.poses.push_back(p);
+        }
+        rrt_pub.publish(rrt_path);
+    }
+    else
+    {
+        ROS_INFO("Path is NOT valid");
+        ROS_INFO("Moveit Error Code: %d", moveiterrorcode.val);
+        geometry_msgs::PoseArray rrt_path;
+        rrt_path.header.stamp = ros::Time::now();
+        rrt_path.header.frame_id = "world_enu";
+        geometry_msgs::Pose p;
+        p.position.x = -99;
+        p.position.y = -99;
+        p.position.z = -99;
+        rrt_path.poses.push_back(p);
+        rrt_pub.publish(rrt_path);
+        ROS_INFO("Sending pose of (-99, -99, -99) (invalid)");
+    }
+
+    traversing = false;
+}
+
+void Quadrotor::computeNBVPathCB(const geometry_msgs::Point::ConstPtr &point)
+{
+    int timeOut = 0;
+    while(traversing && timeOut < 50){
+        ROS_INFO("Waiting for drone traversal to finish before checking distance");
+        timeOut++;
+        ros::Duration(0.2).sleep();
+    }
+    traversing = true;
+    this->trajectory_received = false;
+
+    geometry_msgs::Pose input_pose;
+    input_pose.position.x = point->x;
+    input_pose.position.y = point->y;
+    input_pose.position.z = point->z;
+
+    geometry_msgs::Pose transformed_Pose = transformPose(input_pose, "world_enu", "pointr");
+
+    ROS_INFO("Computing MoveIt distance from (%f,%f,%f) to (%f,%f,%f)", odometry_information.position.x, odometry_information.position.y, odometry_information.position.z,
+                                                                        transformed_Pose.position.x, transformed_Pose.position.y, transformed_Pose.position.z);
+    std::vector<double> target(7);
+    target[0] = transformed_Pose.position.x;
+    target[1] = transformed_Pose.position.y;
+    target[2] = transformed_Pose.position.z;
+    target[3] = odometry_information.orientation.x;
+    target[4] = odometry_information.orientation.y;
+    target[5] = odometry_information.orientation.z;
+    target[6] = odometry_information.orientation.w;
+
+    std::vector<double> start_state_(7);
+    start_state_[0] = odometry_information.position.x;
+    start_state_[1] = odometry_information.position.y;
+    start_state_[2] = odometry_information.position.z;
+    start_state_[3] = odometry_information.orientation.x;
+    start_state_[4] = odometry_information.orientation.y;
+    start_state_[5] = odometry_information.orientation.z;
+    start_state_[6] = odometry_information.orientation.w;
+
+    this->move_group->setJointValueTarget(target);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+
+    this->collision = false;
+    this->start_state->setVariablePositions(start_state_);
+    this->move_group->setStartState(*start_state);
+
+    moveit::core::MoveItErrorCode moveiterrorcode = move_group->plan(plan);
+    this->isPathValid = (moveiterrorcode == moveit::planning_interface::MoveItErrorCode::SUCCESS);
+    ROS_INFO("Moveit Error Code: %d", moveiterrorcode.val);
+    if(this->isPathValid){
+        ROS_INFO("Path is valid");
+        this->plan_start_state = plan.start_state_;
+        this->plan_trajectory = plan.trajectory_;
+        while(!trajectory_received){
+            ROS_INFO("Waiting for trajectory");
+            ros::Duration(0.2).sleep();
+        }
+        geometry_msgs::PoseArray rrt_path;
+        rrt_path.header.stamp = ros::Time::now();
+        rrt_path.header.frame_id = "world_enu";
+        for(int i=0;i<trajectory.size();i++){
+            ROS_INFO("Trajectory #:%d, Point: (%f, %f, %f)", i+1, trajectory[i].position.x, trajectory[i].position.y, trajectory[i].position.z);
+            geometry_msgs::Pose p;
+            p.position.x = trajectory[i].position.x;
+            p.position.y = trajectory[i].position.y;
+            p.position.z = trajectory[i].position.z;
+
+            geometry_msgs::Pose transformed_back;
+            transformed_back = transformPose(p, "pointr", "world_enu");
+            rrt_path.poses.push_back(transformed_back);
+        }
+        rrt_pub.publish(rrt_path);
+    }
+    else
+    {
+        ROS_INFO("Path is NOT valid");
+        ROS_INFO("Moveit Error Code: %d", moveiterrorcode.val);
+        geometry_msgs::PoseArray rrt_path;
+        rrt_path.header.stamp = ros::Time::now();
+        rrt_path.header.frame_id = "world_enu";
+        geometry_msgs::Pose p;
+        p.position.x = -99;
+        p.position.y = -99;
+        p.position.z = -99;
+        rrt_path.poses.push_back(p);
+        rrt_pub.publish(rrt_path);
+        ROS_INFO("Sending pose of (-99, -99, -99) (invalid)");
+    }
+
+    traversing = false;
+}
+
+void Quadrotor::computeMultiAgentNBVPathCB(const geometry_msgs::Pose::ConstPtr &point)
+{
+    int timeOut = 0;
+    while(traversing && timeOut < 50){
+        ROS_INFO("Waiting for drone traversal to finish before checking distance");
+        timeOut++;
+        ros::Duration(0.2).sleep();
+    }
+    traversing = true;
+    this->trajectory_received = false;
+
+    geometry_msgs::Pose input_pose;
+    input_pose.position.x = point->position.x;
+    input_pose.position.y = point->position.y;
+    input_pose.position.z = point->position.z;
+
+
+    geometry_msgs::Pose start_pose;
+    if(point->orientation.w == 1)
+    {
+        start_pose.position.x = odometry_information.position.x;
+        start_pose.position.y = odometry_information.position.y;
+        start_pose.position.z = odometry_information.position.z;
+        start_pose.orientation.x = odometry_information.orientation.x;
+        start_pose.orientation.y = odometry_information.orientation.y;
+        start_pose.orientation.z = odometry_information.orientation.z;
+        start_pose.orientation.w = odometry_information.orientation.w;
+    }
+    else if(point->orientation.w == 2)
+    {
+        start_pose.position.x = odometry_2_information.position.x;
+        start_pose.position.y = odometry_2_information.position.y;
+        start_pose.position.z = odometry_2_information.position.z;
+        start_pose.orientation.x = odometry_2_information.orientation.x;
+        start_pose.orientation.y = odometry_2_information.orientation.y;
+        start_pose.orientation.z = odometry_2_information.orientation.z;
+        start_pose.orientation.w = odometry_2_information.orientation.w;
+    }
+
+    geometry_msgs::Pose transformed_Pose = transformPose(input_pose, "world_enu", "pointr");
+    ROS_INFO("Computing MoveIt distance from (%f,%f,%f) to (%f,%f,%f)", odometry_information.position.x, odometry_information.position.y, odometry_information.position.z,
+                                                                        transformed_Pose.position.x, transformed_Pose.position.y, transformed_Pose.position.z);
+    std::vector<double> target(7);
+    target[0] = transformed_Pose.position.x;
+    target[1] = transformed_Pose.position.y;
+    target[2] = transformed_Pose.position.z;
+    target[3] = start_pose.orientation.x;
+    target[4] = start_pose.orientation.y;
+    target[5] = start_pose.orientation.z;
+    target[6] = start_pose.orientation.w;
+
+    std::vector<double> start_state_(7);
+    start_state_[0] = start_pose.position.x;
+    start_state_[1] = start_pose.position.y;
+    start_state_[2] = start_pose.position.z;
+    start_state_[3] = start_pose.orientation.x;
+    start_state_[4] = start_pose.orientation.y;
+    start_state_[5] = start_pose.orientation.z;
+    start_state_[6] = start_pose.orientation.w;
+
+    this->move_group->setJointValueTarget(target);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+
+    this->collision = false;
+    this->start_state->setVariablePositions(start_state_);
+    this->move_group->setStartState(*start_state);
+
+    moveit::core::MoveItErrorCode moveiterrorcode = move_group->plan(plan);
+    this->isPathValid = (moveiterrorcode == moveit::core::MoveItErrorCode::SUCCESS);
+    ROS_INFO("Moveit Error Code: %d", moveiterrorcode.val);
+    if(this->isPathValid){
+        ROS_INFO("Path is valid");
+        this->plan_start_state = plan.start_state_;
+        this->plan_trajectory = plan.trajectory_;
+        while(!trajectory_received){
+            ROS_INFO("Waiting for trajectory");
+            //ros::Duration(0.2).sleep();
+        }
+        geometry_msgs::PoseArray rrt_path;
+        rrt_path.header.stamp = ros::Time::now();
+        rrt_path.header.frame_id = "world_enu";
+        for(int i=0;i<trajectory.size();i++){
+            ROS_INFO("Trajectory #:%d, Point: (%f, %f, %f)", i+1, trajectory[i].position.x, trajectory[i].position.y, trajectory[i].position.z);
+            geometry_msgs::Pose p;
+            p.position.x = trajectory[i].position.x;
+            p.position.y = trajectory[i].position.y;
+            p.position.z = trajectory[i].position.z;
+
+            rrt_path.poses.push_back(p);
+        }
+        rrt_pub.publish(rrt_path);
+    }
+    else
+    {
+        ROS_INFO("Path is NOT valid");
+        ROS_INFO("Moveit Error Code: %d", moveiterrorcode.val);
+        geometry_msgs::PoseArray rrt_path;
+        rrt_path.header.stamp = ros::Time::now();
+        rrt_path.header.frame_id = "world_enu";
+        geometry_msgs::Pose p;
+        p.position.x = -99;
+        p.position.y = -99;
+        p.position.z = -99;
+        rrt_path.poses.push_back(p);
+        rrt_pub.publish(rrt_path);
+        ROS_INFO("Sending pose of (-99, -99, -99) (invalid)");
+    }
+
+    traversing = false;
 }
 
 void Quadrotor::computePathLengthCB(const geometry_msgs::Point::ConstPtr &point)
@@ -346,8 +1242,8 @@ void Quadrotor::computePathLengthCB(const geometry_msgs::Point::ConstPtr &point)
     this->move_group->setStartState(*start_state);
     ROS_INFO("After computer distance");
 
-    moveit::planning_interface::MoveItErrorCode moveiterrorcode = move_group->plan(plan);
-    this->isPathValid = (moveiterrorcode == moveit::planning_interface::MoveItErrorCode::SUCCESS);
+    moveit::core::MoveItErrorCode moveiterrorcode = move_group->plan(plan);
+    this->isPathValid = (moveiterrorcode == moveit::core::MoveItErrorCode::SUCCESS);
     ROS_INFO("Moveit Error Code: %d", moveiterrorcode.val);
     if(this->isPathValid){
         ROS_INFO("Path is valid");
@@ -381,6 +1277,32 @@ void Quadrotor::computePathLengthCB(const geometry_msgs::Point::ConstPtr &point)
     	ROS_INFO("Sending distance of -1 (invalid)");
     }
     traversing = false;
+}
+
+void Quadrotor::rotateDroneCB(const geometry_msgs::Point::ConstPtr &point)
+{
+    geometry_msgs::Pose center;
+    center.position.x = point->x;
+    center.position.y = point->y;
+    center.position.z = point->z;
+
+    geometry_msgs::Pose odometry_ned_transformed = transformPose(odometry_information, "world_ned", "world_enu");
+    geometry_msgs::Pose center_transformed = transformPose(center, "world_ned", "world_enu");
+
+    double direction_y = center_transformed.position.y - odometry_ned_transformed.position.y;
+    double direction_x = center_transformed.position.x - odometry_ned_transformed.position.x;
+    double angle = atan2(direction_y, direction_x);
+
+    angle = angle * 180 / M_PI;
+
+    uav_moving.data = true;
+    uav_moving_pub.publish(uav_moving);
+    sleep(0.2);
+    client.rotateToYawAsync(angle, 3);
+    sleep(2);
+    uav_moving.data = false;
+    uav_moving_pub.publish(uav_moving);
+    sleep(0.2);
 }
 
 bool Quadrotor::double_equals(double a, double b)
@@ -417,10 +1339,19 @@ geometry_msgs::Pose Quadrotor::transformPose(geometry_msgs::Pose in, std::string
 void Quadrotor::takeoff()
 {
 
+    client.enableApiControl(true);
+    client.armDisarm(true);
+    
     client.takeoffAsync(5);
     ros::Duration(5.0).sleep();
+    client.moveToPositionAsync(0, 0, -5, 1, 3);
+    ros::Duration(4).sleep();
+    uav_moving.data = true;
+    uav_moving_pub.publish(uav_moving);
     client.rotateToYawAsync(-90, 3);
     ros::Duration(4).sleep();
+    uav_moving.data = false;
+    uav_moving_pub.publish(uav_moving);
 
     ROS_INFO("Takeoff successful");
 }

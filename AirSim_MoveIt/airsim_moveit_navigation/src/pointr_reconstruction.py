@@ -43,7 +43,7 @@ pub = rospy.Publisher('/nbv_position_ready', Bool, queue_size=10)
 
 pc_pub = rospy.Publisher('/predicted_pointcloud', PointCloud2, queue_size=1)
 
-cand_pub = rospy.Publisher('/compute_rrt_path', Point, queue_size=10)
+cand_pub = rospy.Publisher('/compute_nbv_path', Point, queue_size=10)
 
 rrt_poses = np.zeros(3)
 
@@ -62,7 +62,7 @@ total_flight_distance = 0
 start_time = 0
 
 initial_data = np.array([[0, 0, 0]])
-np.save('/home/user/Data/Reconstruction/our_nbv_data.npy', initial_data)
+np.save('/home/user/Data/Reconstruction/prednbv_data.npy', initial_data)
 
 def rrt_callback(data):
     #rospy.loginfo("Got RRT path")
@@ -354,7 +354,7 @@ def listener():
         rospy.loginfo("Running NBV planner: Iteration [%d]", it_count)
         global total_flight_distance
         rospy.loginfo("Total Flight Distance: [%f] meters", total_flight_distance)
-        data = rospy.wait_for_message("/points", PointCloud2, timeout=None)
+        data = rospy.wait_for_message("/airsim_node/drone_1/depth_points", PointCloud2, timeout=None)
 
         try:
             trans = tf_buffer.lookup_transform("pointr", data.header.frame_id,
@@ -435,7 +435,7 @@ def listener():
         global initial_data
         current_data = np.array([[rospy.get_rostime().secs - start_time, total_flight_distance, total_observed]])
         initial_data = np.concatenate((initial_data, current_data), axis=0)
-        np.save('/home/user/Data/Reconstruction/our_nbv_data.npy', initial_data)
+        np.save('/home/user/Data/Reconstruction/prednbv_data.npy', initial_data)
 
         
         rospy.loginfo("previously observed: %f", previous_step_observed_total)
@@ -508,8 +508,10 @@ def listener():
         trajectories = np.array([[0,0,0,0]])
 
         valid_count = 0
+        candidate_count = 1
         for item in candidate_poses:
-
+            rospy.loginfo("Checking if Drone can fly to candidate viewpoint [%d/%d]", candidate_count, candidate_poses.shape[0])
+            candidate_count += 1
             candidate_too_close = False
             if not first_candidate:
                 for i in range(0, candidates_visited.shape[0]):
@@ -588,11 +590,14 @@ def listener():
             first_candidate = False
             candidates_visited = np.array([[next_pose[0], next_pose[1], next_pose[2]]])
             nbv_poses = np.array([[next_pose[0], next_pose[1], next_pose[2]]])
+            np.save('/home/user/Data/Reconstruction/visited_poses.npy', nbv_poses)
+            #return
         else:
             current_visited = np.array([[next_pose[0], next_pose[1], next_pose[2]]])
             candidates_visited = np.concatenate((candidates_visited, current_visited), axis=0)
             visited_pose = np.array([[next_pose[0], next_pose[1], next_pose[2]]])
             nbv_poses = np.concatenate((nbv_poses, visited_pose))
+            np.save('/home/user/Data/Reconstruction/visited_poses.npy', nbv_poses)
 
 
         next_pose = next_pose * m        

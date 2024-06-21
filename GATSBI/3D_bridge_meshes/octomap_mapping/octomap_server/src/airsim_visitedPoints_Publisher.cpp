@@ -1,8 +1,10 @@
 #include "ros/ros.h"
 #include "std_msgs/String.h"
 #include <std_msgs/Float64.h>
+#include <std_msgs/Bool.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/Pose.h>
+#include <geometry_msgs/PoseArray.h>
 #include <pcl_ros/point_cloud.h>
 #include <pcl/point_cloud.h>
 #include <geometry_msgs/PoseStamped.h>
@@ -11,11 +13,12 @@
 #include <tf2_ros/transform_listener.h>
 #include <nav_msgs/Odometry.h>
 
-float rF = 0; //reset flag
+bool rF = false; //reset flag
 geometry_msgs::Pose currentPose;
-pcl::PointCloud<pcl::PointXYZ>::Ptr visitedPointsList (new pcl::PointCloud<pcl::PointXYZ>);
+pcl::PointCloud<pcl::PointXYZRGBA>::Ptr visitedPointsList (new pcl::PointCloud<pcl::PointXYZRGBA>);
 tf2_ros::Buffer tf_buffer;
 geometry_msgs::TransformStamped base_link_to_world_ned;
+geometry_msgs::PoseArray pose_array_;
 
 geometry_msgs::Pose transformPose(geometry_msgs::Pose in, std::string target_frame, std::string source_frame)
 {
@@ -42,9 +45,9 @@ geometry_msgs::Pose transformPose(geometry_msgs::Pose in, std::string target_fra
     return out;
 }
 
-void resetFlag_cb(const std_msgs::Float64& msg){ // reset flag
+void resetFlag_cb(const std_msgs::Bool& msg){ // reset flag
   rF = msg.data;
-  ROS_INFO("I heard: [%f]", msg.data);
+  ROS_INFO("I heard: [%d]", (msg.data) ? 1 : 0);
 }
 
 void imu_cb(const nav_msgs::Odometry::ConstPtr msg){ // imu
@@ -58,29 +61,41 @@ int main(int argc, char **argv){
   myfile.open("/home/user/bridgeInspection/realDistance.csv");
   ros::init(argc, argv, "visitedPointPublisher");
   ros::NodeHandle n;
-  ros::Publisher pointList_pub = n.advertise<pcl::PointCloud<pcl::PointXYZ>> ("/visited_point_list",1,true);
+  ros::Publisher pointList_pub = n.advertise<pcl::PointCloud<pcl::PointXYZRGBA>> ("/visited_point_list",1,true);
+  ros::Publisher poseList_pub = n.advertise<geometry_msgs::PoseArray> ("/visited_poses_list",1,true);
   ros::Subscriber resetFlag = n.subscribe("/resetFlag", 1, resetFlag_cb);
   ros::Subscriber uavIMU_sub = n.subscribe("/airsim_node/drone_1/odom_local_ned",1,imu_cb);
   ros::Rate loop_rate(1);
   visitedPointsList->header.frame_id = "/world_enu";
+  pose_array_.header.frame_id = "/world_enu";
+
   ROS_INFO("visitedPoints_publisher");
   int count = 0;
 
   while (ros::ok()){
     ros::spinOnce();
-    ROS_INFO("while loop: %d", count);
+    //ROS_INFO("while loop: %d", count);
     myfile<<ros::Time::now()<<","<<currentPose.position.x<<","<<currentPose.position.y<<","<<currentPose.position.z<<std::endl;
     visitedPointsList->width = count+1; visitedPointsList->height = 1; visitedPointsList->points.resize (visitedPointsList->width * visitedPointsList->height);
     if(!rF){ // adding points
       visitedPointsList->points[count].x = currentPose.position.x; visitedPointsList->points[count].y = currentPose.position.y; visitedPointsList->points[count].z = currentPose.position.z;
+      visitedPointsList->points[count].r = currentPose.orientation.x;
+      visitedPointsList->points[count].g = currentPose.orientation.y; 
+      visitedPointsList->points[count].b = currentPose.orientation.z; 
+      visitedPointsList->points[count].a = currentPose.orientation.w;  
+      pose_array_.poses.push_back(currentPose);
       if(visitedPointsList->size()){
         pointList_pub.publish(visitedPointsList);
-        ROS_INFO("size of visitedPointsList: %lu", visitedPointsList->size());
+        poseList_pub.publish(pose_array_);
+        //ROS_INFO("size of visitedPointsList: %lu", visitedPointsList->size());
       }
       count++;
     }
     else{
+      ROS_INFO("Clearing Visited Points and Pose List");
       visitedPointsList->clear();
+      pose_array_.poses.clear();
+      ROS_INFO("Pose List size: [%d]", pose_array_.poses.size());
       count = 0;
     }
     loop_rate.sleep();

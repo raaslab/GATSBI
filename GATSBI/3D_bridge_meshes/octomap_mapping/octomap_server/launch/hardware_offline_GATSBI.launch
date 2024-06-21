@@ -1,0 +1,19 @@
+<launch>
+	<node pkg="octomap_server" type="hardware_offline_GATSBI" name="hardware_offline_GATSBI" output="screen">
+		<param name="resolution" value="1" />
+		<param name="viewing_cone_angle_threshold" value="20" />
+		<param name="min_radius" value="2" />
+		<param name="max_radius" value="5" />
+		<param name="neighbor_viewpoints_check" value="2" />
+		<param name="neighbor_check" value="1" />
+		<param name="unknown_is_treated_free" value="true" />
+		<param name="x_min" value="-70" />
+		<param name="x_max" value="70" />
+		<param name="y_min" value="-70" />
+		<param name="y_max" value="70" />
+		<param name="z_min" value="0" />
+		<param name="z_max" value="25" />
+		<param name="top_down_enabled" value="true" />
+		<param name="num_of_directions" value="5" />
+	</node>
+</launch>
